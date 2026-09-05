@@ -10,8 +10,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// doRequest sends an HTTP request to the test server and returns the response and body.
-func doRequest(t *testing.T, ts *httptest.Server, method, path string) (*http.Response, string) {
+// doRequest sends an HTTP request to the test server and returns the response
+// with its body fully read and closed.
+func doRequest(t *testing.T, ts *httptest.Server, method, path string) testResponse {
 	req, err := http.NewRequest(method, ts.URL+path, nil)
 	require.NoError(t, err)
 
@@ -22,7 +23,11 @@ func doRequest(t *testing.T, ts *httptest.Server, method, path string) (*http.Re
 	respBody, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 
-	return resp, string(respBody)
+	return testResponse{
+		StatusCode: resp.StatusCode,
+		Header:     resp.Header,
+		body:       string(respBody),
+	}
 }
 
 // testCase holds a single table-driven test case for URL endpoint tests.
@@ -211,9 +216,9 @@ func runTableTests(t *testing.T, cases []testCase) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			resp, body := doRequest(t, ts, tc.method, tc.path) //nolint:bodyclose // doRequest closes the body
+			resp := doRequest(t, ts, tc.method, tc.path)
 			assert.Equal(t, tc.want.code, resp.StatusCode)
-			assert.Equal(t, tc.want.response, body)
+			assert.Equal(t, tc.want.response, resp.body)
 			assert.Equal(t, tc.want.contentType, resp.Header.Get("Content-Type"))
 		})
 	}

@@ -1,10 +1,20 @@
 package handler
 
 import (
+	"net/http"
 	"net/http/httptest"
 
 	"github.com/nikitaw13/metricscollector/internal/repository"
 )
+
+// testResponse carries the parts of an HTTP response needed by tests.
+// The request helpers read and close the response body before returning,
+// so callers never need to close anything.
+type testResponse struct {
+	StatusCode int
+	Header     http.Header
+	body       string
+}
 
 // defaultGaugeValue is the pre-seeded gauge value used across handler tests.
 const defaultGaugeValue = 123.00
