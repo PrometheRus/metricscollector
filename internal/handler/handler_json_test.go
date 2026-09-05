@@ -359,7 +359,7 @@ func TestJSONUpdate(t *testing.T) {
 }
 
 // jsonUpdatesTests covers POST /updates: batch metric updates. Successful
-// batches return 204 without a Content-Type header; validation failures
+// batches return 200 without a Content-Type header; validation failures
 // return a JSON error body.
 var jsonUpdatesTests = []jsonTestCase{
 	{
@@ -368,15 +368,15 @@ var jsonUpdatesTests = []jsonTestCase{
 		"/updates/",
 		`[{"type":"gauge","id":"batch_gauge","value":42.5},{"type":"counter","id":"batch_counter","delta":7}]`,
 		"application/json",
-		jsonTestWant{http.StatusNoContent, ""},
+		jsonTestWant{http.StatusOK, ""},
 	},
 	{
-		"Empty batch returns no content",
+		"Empty batch is accepted",
 		http.MethodPost,
 		"/updates/",
 		`[]`,
 		"application/json",
-		jsonTestWant{http.StatusNoContent, ""},
+		jsonTestWant{http.StatusOK, ""},
 	},
 	{
 		"Batch with invalid metric type",
@@ -438,7 +438,7 @@ func TestJSONUpdates(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			resp := testJSONRequest(t, ts, tc.method, tc.path, tc.body, tc.contentType)
 			assert.Equal(t, tc.want.code, resp.StatusCode)
-			// 204 responses carry no body, so no Content-Type is set.
+			// Success responses carry no body, so no Content-Type is set.
 			if tc.want.contentType != "" {
 				assert.Equal(t, tc.want.contentType, resp.Header.Get("Content-Type"))
 			}
@@ -454,7 +454,7 @@ func TestJSONUpdates_PersistsBatch(t *testing.T) {
 
 	batch := `[{"type":"gauge","id":"batch_gauge","value":42.5},{"type":"counter","id":"batch_counter","delta":7}]`
 	resp := testJSONRequest(t, ts, http.MethodPost, "/updates/", batch, "application/json")
-	require.Equal(t, http.StatusNoContent, resp.StatusCode)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
 
 	tests := []struct {
 		name string
