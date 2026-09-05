@@ -337,7 +337,7 @@ func runJSONTests(t *testing.T, cases []jsonTestCase) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			resp, _ := testJSONRequest(t, ts, tc.method, tc.path, tc.body, tc.contentType)
+			resp, _ := testJSONRequest(t, ts, tc.method, tc.path, tc.body, tc.contentType) //nolint:bodyclose // testJSONRequest closes the body
 			assert.Equal(t, tc.want.code, resp.StatusCode)
 			assert.Equal(t, tc.want.contentType, resp.Header.Get("Content-Type"))
 		})
@@ -432,7 +432,7 @@ func TestJSONUpdates(t *testing.T) {
 
 	for _, tc := range jsonUpdatesTests {
 		t.Run(tc.name, func(t *testing.T) {
-			resp, _ := testJSONRequest(t, ts, tc.method, tc.path, tc.body, tc.contentType)
+			resp, _ := testJSONRequest(t, ts, tc.method, tc.path, tc.body, tc.contentType) //nolint:bodyclose // testJSONRequest closes the body
 			assert.Equal(t, tc.want.code, resp.StatusCode)
 			// 204 responses carry no body, so no Content-Type is set.
 			if tc.want.contentType != "" {
@@ -449,7 +449,7 @@ func TestJSONUpdates_PersistsBatch(t *testing.T) {
 	defer ts.Close()
 
 	batch := `[{"type":"gauge","id":"batch_gauge","value":42.5},{"type":"counter","id":"batch_counter","delta":7}]`
-	resp, _ := testJSONRequest(t, ts, http.MethodPost, "/updates/", batch, "application/json")
+	resp, _ := testJSONRequest(t, ts, http.MethodPost, "/updates/", batch, "application/json") //nolint:bodyclose // testJSONRequest closes the body
 	require.Equal(t, http.StatusNoContent, resp.StatusCode)
 
 	tests := []struct {
@@ -471,7 +471,7 @@ func TestJSONUpdates_PersistsBatch(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			resp, body := testJSONRequest(t, ts, http.MethodPost, "/value", tc.body, "application/json")
+			resp, body := testJSONRequest(t, ts, http.MethodPost, "/value", tc.body, "application/json") //nolint:bodyclose // testJSONRequest closes the body
 			require.Equal(t, http.StatusOK, resp.StatusCode)
 
 			var got model.Metric
@@ -488,11 +488,11 @@ func TestJSONUpdates_RejectsBatchAtomically(t *testing.T) {
 	defer ts.Close()
 
 	batch := `[{"type":"gauge","id":"atomic_gauge","value":1.5},{"type":"random","id":"atomic_unknown"}]`
-	resp, _ := testJSONRequest(t, ts, http.MethodPost, "/updates/", batch, "application/json")
+	resp, _ := testJSONRequest(t, ts, http.MethodPost, "/updates/", batch, "application/json") //nolint:bodyclose // testJSONRequest closes the body
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 
 	// The valid metric from the rejected batch must not be stored.
-	resp, _ = testJSONRequest(t, ts, http.MethodPost, "/value", `{"type":"gauge","id":"atomic_gauge"}`, "application/json")
+	resp, _ = testJSONRequest(t, ts, http.MethodPost, "/value", `{"type":"gauge","id":"atomic_gauge"}`, "application/json") //nolint:bodyclose // testJSONRequest closes the body
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 
@@ -520,7 +520,7 @@ func TestJSONRead(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			resp, body := testJSONRequest(t, ts, http.MethodPost, "/value", tc.body, "application/json")
+			resp, body := testJSONRequest(t, ts, http.MethodPost, "/value", tc.body, "application/json") //nolint:bodyclose // testJSONRequest closes the body
 			assert.Equal(t, http.StatusOK, resp.StatusCode)
 			assert.Equal(t, expectedJSONContentType, resp.Header.Get("Content-Type"))
 
@@ -641,7 +641,7 @@ func TestJSONStorageErrors(t *testing.T) {
 			ts := GetTestServerWithRepository(tc.setup(ctrl))
 			t.Cleanup(ts.Close)
 
-			resp, _ := testJSONRequest(t, ts, http.MethodPost, tc.path, tc.body, "application/json")
+			resp, _ := testJSONRequest(t, ts, http.MethodPost, tc.path, tc.body, "application/json") //nolint:bodyclose // testJSONRequest closes the body
 			assert.Equal(t, tc.want, resp.StatusCode)
 			assert.Equal(t, expectedJSONContentType, resp.Header.Get("Content-Type"))
 		})

@@ -140,7 +140,7 @@ func (ps *PersistentMemStorage) AddCounter(name string, delta int64) (newDelta i
 	if ps.syncWrite {
 		ps.SaveSync()
 	}
-	return ps.MemStorage.counter[name], nil
+	return newDelta, nil
 }
 
 // UpdateMetrics applies a batch of metric updates and saves to disk when sync-write is enabled.

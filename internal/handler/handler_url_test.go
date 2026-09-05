@@ -211,7 +211,7 @@ func runTableTests(t *testing.T, cases []testCase) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			resp, body := doRequest(t, ts, tc.method, tc.path)
+			resp, body := doRequest(t, ts, tc.method, tc.path) //nolint:bodyclose // doRequest closes the body
 			assert.Equal(t, tc.want.code, resp.StatusCode)
 			assert.Equal(t, tc.want.response, body)
 			assert.Equal(t, tc.want.contentType, resp.Header.Get("Content-Type"))

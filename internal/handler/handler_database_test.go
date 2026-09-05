@@ -21,7 +21,7 @@ func TestPing(t *testing.T) {
 		defer ts.Close()
 		mockDB.EXPECT().PingContext(gomock.Any()).Return(nil)
 
-		resp, body := doRequest(t, ts, http.MethodGet, "/ping")
+		resp, body := doRequest(t, ts, http.MethodGet, "/ping") //nolint:bodyclose // doRequest closes the body
 		require.Equal(t, http.StatusOK, resp.StatusCode)
 		require.Equal(t, "text/plain; charset=utf-8", resp.Header.Get("Content-Type"))
 		require.Equal(t, "Pong\n", body)
@@ -36,7 +36,7 @@ func TestPing(t *testing.T) {
 		defer ts.Close()
 		mockDB.EXPECT().PingContext(gomock.Any()).Return(errors.New("connection refused"))
 
-		resp, body := doRequest(t, ts, http.MethodGet, "/ping")
+		resp, body := doRequest(t, ts, http.MethodGet, "/ping") //nolint:bodyclose // doRequest closes the body
 		require.Equal(t, http.StatusInternalServerError, resp.StatusCode)
 		require.Equal(t, "text/plain; charset=utf-8", resp.Header.Get("Content-Type"))
 		require.Equal(t, "Failed to ping database\n", body)

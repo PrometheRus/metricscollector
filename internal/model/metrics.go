@@ -14,10 +14,10 @@ const (
 // Errors describing invalid metric payloads and missing metrics.
 var (
 	ErrMissingType    = errors.New("Metric type is required")
-	ErrInvalidType    = errors.New("Invalid metric type")
+	ErrInvalidType    = errors.New("invalid metric type")
 	ErrMissingID      = errors.New("Metric ID is required")
 	ErrMissingValue   = errors.New("Metric value is required")
-	ErrInvalidValue   = errors.New("Invalid metric value")
+	ErrInvalidValue   = errors.New("invalid metric value")
 	ErrMetricNotFound = errors.New("not found")
 )
 
