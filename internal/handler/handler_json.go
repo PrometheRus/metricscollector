@@ -163,7 +163,7 @@ func (h *MetricsHandler) handleJSONUpdates(w http.ResponseWriter, r *http.Reques
 		writeJSONError(w, http.StatusInternalServerError, err)
 		return
 	}
-	w.WriteHeader(http.StatusNoContent)
+	w.WriteHeader(http.StatusOK)
 }
 
 // handleJSONRead handles POST /value: validates the JSON payload, looks up the stored
