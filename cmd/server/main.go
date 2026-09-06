@@ -28,13 +28,14 @@ func run() error {
 
 	var storageToUse handler.Repository
 	var dbToUse handler.DBPinger
+	var timeouts = []time.Duration{1 * time.Second, 3 * time.Second, 5 * time.Second}
 
 	isSyncWrite := flagStoreInterval == 0
 
 	switch {
 	// Database storage
 	case flagDatabaseDSN != "":
-		ps, err := repository.NewPostgresStorageFromDSN(flagDatabaseDSN, flagMigrationPath)
+		ps, err := repository.NewPostgresStorageFromDSN(flagDatabaseDSN, flagMigrationPath, timeouts)
 
 		if err != nil {
 			handler.Logger.Error("failed to initialize postgres storage", zap.Error(err))

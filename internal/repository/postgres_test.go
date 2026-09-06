@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/jackc/pgerrcode"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/nikitaw13/metricscollector/internal/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -29,6 +31,7 @@ const (
 func newMockStorage(t *testing.T) (*PostgresStorage, sqlmock.Sqlmock) {
 	t.Helper()
 
+	var timeouts = []time.Duration{1 * time.Millisecond, 3 * time.Millisecond, 5 * time.Millisecond}
 	db, mock, err := sqlmock.New()
 	require.NoError(t, err)
 
@@ -37,7 +40,7 @@ func newMockStorage(t *testing.T) (*PostgresStorage, sqlmock.Sqlmock) {
 		_ = db.Close()
 	})
 
-	return NewPostgresStorage(db), mock
+	return NewPostgresStorage(db, timeouts), mock
 }
 
 // TestPostgresStorage_SetGauge verifies the gauge upsert and error wrapping on database failures.
@@ -520,6 +523,127 @@ func TestPostgresStorage_UpdateMetrics_TxLifecycleErrors(t *testing.T) {
 	}
 }
 
+// ---------- retries ----------
+
+// connErr returns a PostgreSQL Class 08 (connection exception) error, which
+// withRetries must treat as retriable.
+func connErr() error {
+	return &pgconn.PgError{Code: pgerrcode.ConnectionException, Message: "connection terminated unexpectedly"}
+}
+
+// TestPostgresStorage_SetGauge_RetrySucceeds verifies that a Class 08 error on
+// the first attempt is retried and the operation eventually succeeds.
+func TestPostgresStorage_SetGauge_RetrySucceeds(t *testing.T) {
+	t.Parallel()
+
+	ps, mock := newMockStorage(t)
+
+	mock.ExpectExec(qInsertGauge).
+		WithArgs("test_gauge", 42.5).
+		WillReturnError(connErr())
+	mock.ExpectExec(qInsertGauge).
+		WithArgs("test_gauge", 42.5).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err := ps.SetGauge("test_gauge", 42.5)
+
+	require.NoError(t, err)
+}
+
+// TestPostgresStorage_AddCounter_RetrySucceedsOnLastAttempt verifies that the
+// operation succeeds when only the final allowed retry returns a result.
+func TestPostgresStorage_AddCounter_RetrySucceedsOnLastAttempt(t *testing.T) {
+	t.Parallel()
+
+	ps, mock := newMockStorage(t)
+
+	// newMockStorage configures timeouts {1ms, 3ms, 5ms}:
+	// initial attempt plus one retry per timeout, success on the fourth call.
+	mock.ExpectQuery(qInsertCounter).
+		WithArgs("test_counter", int64(5)).
+		WillReturnError(connErr())
+	mock.ExpectQuery(qInsertCounter).
+		WithArgs("test_counter", int64(5)).
+		WillReturnError(connErr())
+	mock.ExpectQuery(qInsertCounter).
+		WithArgs("test_counter", int64(5)).
+		WillReturnError(connErr())
+	mock.ExpectQuery(qInsertCounter).
+		WithArgs("test_counter", int64(5)).
+		WillReturnRows(sqlmock.NewRows([]string{"delta"}).AddRow(int64(10)))
+
+	newDelta, err := ps.AddCounter("test_counter", 5)
+
+	require.NoError(t, err)
+	assert.Equal(t, int64(10), newDelta, "RETURNING delta from the successful retry must be propagated")
+}
+
+// TestPostgresStorage_RetriesExhausted verifies that after exhausting all
+// retries (initial attempt plus one per timeout) the last error is wrapped
+// into an abort message.
+func TestPostgresStorage_RetriesExhausted(t *testing.T) {
+	t.Parallel()
+
+	ps, mock := newMockStorage(t)
+
+	// newMockStorage configures timeouts {1ms, 3ms, 5ms}: exactly 4 attempts.
+	pgErr := connErr()
+	for i := 0; i < 4; i++ {
+		mock.ExpectExec(qInsertGauge).
+			WithArgs("test_gauge", 42.5).
+			WillReturnError(pgErr)
+	}
+
+	err := ps.SetGauge("test_gauge", 42.5)
+
+	assert.ErrorIs(t, err, pgErr)
+	assert.ErrorContains(t, err, "operation aborted after 4 attempts")
+}
+
+// TestPostgresStorage_NoRetryOnNonRetriableError verifies that non-retriable
+// PostgreSQL errors (e.g. unique violation) fail immediately: a single
+// expectation proves no second attempt is made.
+func TestPostgresStorage_NoRetryOnNonRetriableError(t *testing.T) {
+	t.Parallel()
+
+	ps, mock := newMockStorage(t)
+
+	pgErr := &pgconn.PgError{Code: pgerrcode.UniqueViolation, Message: "duplicate key value violates unique constraint"}
+	mock.ExpectExec(qInsertGauge).
+		WithArgs("test_gauge", 42.5).
+		WillReturnError(pgErr)
+
+	err := ps.SetGauge("test_gauge", 42.5)
+
+	assert.ErrorIs(t, err, pgErr)
+	assert.ErrorContains(t, err, "error writing gauge")
+}
+
+// TestPostgresStorage_UpdateMetrics_RetryOnConnectionError verifies that a
+// Class 08 error while beginning the transaction is retried and the batch is
+// then applied within a fresh transaction.
+func TestPostgresStorage_UpdateMetrics_RetryOnConnectionError(t *testing.T) {
+	t.Parallel()
+
+	ps, mock := newMockStorage(t)
+
+	gaugeVal := 42.5
+	metrics := []model.Metric{
+		{ID: "test_gauge", Type: model.Gauge, Value: &gaugeVal},
+	}
+
+	mock.ExpectBegin().WillReturnError(connErr())
+	mock.ExpectBegin()
+	mock.ExpectExec(qInsertGauge).
+		WithArgs("test_gauge", 42.5).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	mock.ExpectCommit()
+
+	err := ps.UpdateMetrics(t.Context(), metrics)
+
+	require.NoError(t, err)
+}
+
 // TestPostgresStorage_AddCounter_Integration runs only when TEST_DATABASE_DSN is set
 // and verifies real upsert semantics (delta accumulation) that sqlmock cannot check.
 func TestPostgresStorage_AddCounter_Integration(t *testing.T) {
@@ -528,7 +652,8 @@ func TestPostgresStorage_AddCounter_Integration(t *testing.T) {
 		t.Skip("TEST_DATABASE_DSN not set - skipping integration test")
 	}
 
-	ps, err := NewPostgresStorageFromDSN(dsn, "../../migrations")
+	var timeouts = []time.Duration{1 * time.Millisecond, 3 * time.Millisecond, 5 * time.Millisecond}
+	ps, err := NewPostgresStorageFromDSN(dsn, "../../migrations", timeouts)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, ps.Close()) })
 
@@ -557,7 +682,8 @@ func TestPostgresStorage_UpdateMetrics_Integration(t *testing.T) {
 		t.Skip("TEST_DATABASE_DSN not set - skipping integration test")
 	}
 
-	ps, err := NewPostgresStorageFromDSN(dsn, "../../migrations")
+	var timeouts = []time.Duration{1 * time.Millisecond, 3 * time.Millisecond, 5 * time.Millisecond}
+	ps, err := NewPostgresStorageFromDSN(dsn, "../../migrations", timeouts)
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, ps.Close()) })
 

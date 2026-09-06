@@ -11,6 +11,7 @@ type Collector struct {
 	storage Storage
 }
 
+// NewCollector creates a Collector that stores collected metrics in the given storage.
 func NewCollector(storage Storage) *Collector {
 	return &Collector{
 		storage: storage,

@@ -248,6 +248,7 @@ type retryTransport struct {
 	attempts []time.Time
 }
 
+// RoundTrip records the attempt and delegates it to the underlying transport.
 func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	t.mu.Lock()
 	t.attempts = append(t.attempts, time.Now())

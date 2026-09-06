@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/pgx/v5"
@@ -32,7 +33,8 @@ type counterRow struct {
 
 // PostgresStorage wraps a sql.DB connection for PostgreSQL operations.
 type PostgresStorage struct {
-	db *sql.DB
+	db       *sql.DB
+	timeouts []time.Duration
 }
 
 // Close closes the underlying database connection.
@@ -74,14 +76,15 @@ var (
 )
 
 // NewPostgresStorage creates a new PostgresStorage instance.
-func NewPostgresStorage(db *sql.DB) *PostgresStorage {
+func NewPostgresStorage(db *sql.DB, timeouts []time.Duration) *PostgresStorage {
 	return &PostgresStorage{
-		db: db,
+		db:       db,
+		timeouts: timeouts,
 	}
 }
 
 // NewPostgresStorageFromDSN opens a PostgreSQL connection using the given DSN, runs migrations, and returns a PostgresStorage.
-func NewPostgresStorageFromDSN(dsn, migrationsPath string) (*PostgresStorage, error) {
+func NewPostgresStorageFromDSN(dsn, migrationsPath string, timeouts []time.Duration) (*PostgresStorage, error) {
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open standard sql DB: %w", err)
@@ -112,7 +115,7 @@ func NewPostgresStorageFromDSN(dsn, migrationsPath string) (*PostgresStorage, er
 		log.Println("Migrations applied successfully.")
 	}
 
-	postgresStorage := NewPostgresStorage(db)
+	postgresStorage := NewPostgresStorage(db, timeouts)
 	return postgresStorage, nil
 }
 
@@ -123,6 +126,13 @@ func (ps *PostgresStorage) PingContext(ctx context.Context) error {
 
 // SetGauge sets the named gauge metric to the specified value, overwriting any previous value.
 func (ps *PostgresStorage) SetGauge(name string, value float64) error {
+	return ps.withRetries(func() error {
+		return ps.setGauge(name, value)
+	})
+}
+
+// setGauge writes the gauge value to the database in a single attempt.
+func (ps *PostgresStorage) setGauge(name string, value float64) error {
 	_, err := ps.db.Exec(setGaugeExec, name, value)
 
 	if err != nil {
@@ -133,8 +143,26 @@ func (ps *PostgresStorage) SetGauge(name string, value float64) error {
 }
 
 // AddCounter increments the named counter metric by the specified delta.
-func (ps *PostgresStorage) AddCounter(name string, delta int64) (newDelta int64, err error) {
-	err = ps.db.QueryRow(addCounterExec, name, delta).Scan(&newDelta)
+func (ps *PostgresStorage) AddCounter(name string, delta int64) (int64, error) {
+	var newDelta int64
+
+	err := ps.withRetries(func() error {
+		var err error
+		newDelta, err = ps.addCounter(name, delta)
+		return err
+	})
+
+	if err != nil {
+		return 0, err
+	}
+
+	return newDelta, nil
+}
+
+// addCounter increments the counter in the database in a single attempt.
+func (ps *PostgresStorage) addCounter(name string, delta int64) (int64, error) {
+	var newDelta int64
+	err := ps.db.QueryRow(addCounterExec, name, delta).Scan(&newDelta)
 
 	if err != nil {
 		return 0, fmt.Errorf("error writing counter: %w", err)
@@ -145,6 +173,23 @@ func (ps *PostgresStorage) AddCounter(name string, delta int64) (newDelta int64,
 // GetGauge returns the value of the named gauge metric.
 // Returns an error if the metric does not exist.
 func (ps *PostgresStorage) GetGauge(name string) (float64, error) {
+	var value float64
+
+	err := ps.withRetries(func() error {
+		var err error
+		value, err = ps.getGauge(name)
+		return err
+	})
+
+	if err != nil {
+		return 0, err
+	}
+
+	return value, nil
+}
+
+// getGauge reads the gauge value from the database in a single attempt.
+func (ps *PostgresStorage) getGauge(name string) (float64, error) {
 	row := ps.db.QueryRow(getGaugeQuery, name)
 	var result gaugeRow
 	err := row.Scan(&result.value)
@@ -163,6 +208,23 @@ func (ps *PostgresStorage) GetGauge(name string) (float64, error) {
 // GetCounter returns the value of the named counter metric.
 // Returns an error if the metric does not exist.
 func (ps *PostgresStorage) GetCounter(name string) (int64, error) {
+	var delta int64
+
+	err := ps.withRetries(func() error {
+		var err error
+		delta, err = ps.getCounter(name)
+		return err
+	})
+
+	if err != nil {
+		return 0, err
+	}
+
+	return delta, nil
+}
+
+// getCounter reads the counter delta from the database in a single attempt.
+func (ps *PostgresStorage) getCounter(name string) (int64, error) {
 	row := ps.db.QueryRow(getCounterQuery, name)
 	var result counterRow
 	err := row.Scan(&result.delta)
@@ -179,14 +241,31 @@ func (ps *PostgresStorage) GetCounter(name string) (int64, error) {
 }
 
 // GetAllGauges returns a shallow copy of all gauge metrics to prevent external mutation.
-func (ps *PostgresStorage) GetAllGauges() (gauges map[string]float64, err error) {
+func (ps *PostgresStorage) GetAllGauges() (map[string]float64, error) {
+	var gauges map[string]float64
+
+	err := ps.withRetries(func() error {
+		var err error
+		gauges, err = ps.getAllGauges()
+		return err
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return gauges, nil
+}
+
+// getAllGauges reads all gauges from the database in a single attempt.
+func (ps *PostgresStorage) getAllGauges() (map[string]float64, error) {
 	rows, err := ps.db.Query(getAllGaugesQuery)
 	if err != nil {
 		return nil, fmt.Errorf("error executing query: %w", err)
 	}
 	defer rows.Close()
 
-	gauges = make(map[string]float64)
+	gauges := make(map[string]float64)
 
 	for rows.Next() {
 		var g gaugeRow
@@ -207,14 +286,31 @@ func (ps *PostgresStorage) GetAllGauges() (gauges map[string]float64, err error)
 }
 
 // GetAllCounters returns a shallow copy of all counter metrics to prevent external mutation.
-func (ps *PostgresStorage) GetAllCounters() (counters map[string]int64, err error) {
+func (ps *PostgresStorage) GetAllCounters() (map[string]int64, error) {
+	var counters map[string]int64
+
+	err := ps.withRetries(func() error {
+		var err error
+		counters, err = ps.getAllCounters()
+		return err
+	})
+
+	if err != nil {
+		return nil, err
+	}
+
+	return counters, nil
+}
+
+// getAllCounters reads all counters from the database in a single attempt.
+func (ps *PostgresStorage) getAllCounters() (map[string]int64, error) {
 	rows, err := ps.db.Query(getAllCountersQuery)
 	if err != nil {
 		return nil, fmt.Errorf("error executing query: %w", err)
 	}
 	defer rows.Close()
 
-	counters = make(map[string]int64)
+	counters := make(map[string]int64)
 
 	for rows.Next() {
 		var c counterRow
@@ -234,8 +330,17 @@ func (ps *PostgresStorage) GetAllCounters() (counters map[string]int64, err erro
 	return counters, nil
 }
 
-// UpdateMetrics applies a batch of metric updates in a single database transaction.
-func (ps *PostgresStorage) UpdateMetrics(ctx context.Context, metrics []model.Metric) (err error) {
+// UpdateMetrics applies a batch of metric updates in a single database transaction, retrying on transient failures.
+func (ps *PostgresStorage) UpdateMetrics(ctx context.Context, metrics []model.Metric) error {
+	return ps.withRetries(
+		func() error {
+			return ps.updateMetricsTx(ctx, metrics)
+		},
+	)
+}
+
+// updateMetricsTx applies all metric updates within a single database transaction.
+func (ps *PostgresStorage) updateMetricsTx(ctx context.Context, metrics []model.Metric) error {
 	tx, err := ps.db.BeginTx(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("error beginning a transaction: %w", err)
@@ -255,7 +360,7 @@ func (ps *PostgresStorage) UpdateMetrics(ctx context.Context, metrics []model.Me
 				return fmt.Errorf("error executing setGauge: %w", err)
 			}
 		default:
-			log.Printf("unknown metric type: %s\n", metric.Type)
+			log.Printf("unknown metric type: %s", metric.Type)
 		}
 
 	}
@@ -263,6 +368,31 @@ func (ps *PostgresStorage) UpdateMetrics(ctx context.Context, metrics []model.Me
 	if err != nil {
 		return fmt.Errorf("error committing a transaction: %w", err)
 	}
-
 	return nil
+}
+
+// withRetries runs the given operation and retries retriable failures with the configured backoff.
+func (ps *PostgresStorage) withRetries(operation func() error) error {
+	var lastErr error
+	classifier := NewPostgresErrorClassifier()
+
+	for attempt := 0; attempt <= len(ps.timeouts); attempt++ {
+		if attempt > 0 {
+			time.Sleep(ps.timeouts[attempt-1])
+		}
+		err := operation()
+
+		if err == nil {
+			return nil
+		}
+
+		classification := classifier.Classify(err)
+		if classification == NonRetriable {
+			return err
+		}
+
+		lastErr = err
+		log.Printf("attempt %d/%d failed: %v", attempt+1, len(ps.timeouts)+1, err)
+	}
+	return fmt.Errorf("operation aborted after %d attempts: %w", len(ps.timeouts)+1, lastErr)
 }
