@@ -25,7 +25,7 @@ func requireJSONContent(h http.Handler) http.Handler {
 			return
 		}
 		if r.ContentLength == 0 {
-			writeJSONError(w, http.StatusBadRequest, errors.New("Request body is required"))
+			writeJSONError(w, http.StatusBadRequest, errors.New("request body is required"))
 			return
 		}
 		h.ServeHTTP(w, r)

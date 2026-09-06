@@ -118,8 +118,8 @@ func (ps *PersistentMemStorage) SaveSync() {
 }
 
 // SetGauge sets the named gauge metric to the specified value, overwriting any previous value.
-func (ps *PersistentMemStorage) SetGauge(name string, value float64) (err error) {
-	err = ps.MemStorage.SetGauge(name, value)
+func (ps *PersistentMemStorage) SetGauge(name string, value float64) error {
+	err := ps.MemStorage.SetGauge(name, value)
 	if err != nil {
 		return fmt.Errorf("error SetGauge: %w", err)
 	}
@@ -131,8 +131,8 @@ func (ps *PersistentMemStorage) SetGauge(name string, value float64) (err error)
 }
 
 // AddCounter increments the named counter metric by the specified delta.
-func (ps *PersistentMemStorage) AddCounter(name string, delta int64) (newDelta int64, err error) {
-	newDelta, err = ps.MemStorage.AddCounter(name, delta)
+func (ps *PersistentMemStorage) AddCounter(name string, delta int64) (int64, error) {
+	newDelta, err := ps.MemStorage.AddCounter(name, delta)
 	if err != nil {
 		return 0, fmt.Errorf("error AddCounter: %w", err)
 	}
@@ -140,12 +140,12 @@ func (ps *PersistentMemStorage) AddCounter(name string, delta int64) (newDelta i
 	if ps.syncWrite {
 		ps.SaveSync()
 	}
-	return ps.MemStorage.counter[name], nil
+	return newDelta, nil
 }
 
 // UpdateMetrics applies a batch of metric updates and saves to disk when sync-write is enabled.
-func (ps *PersistentMemStorage) UpdateMetrics(ctx context.Context, metrics []model.Metric) (err error) {
-	err = ps.MemStorage.UpdateMetrics(ctx, metrics)
+func (ps *PersistentMemStorage) UpdateMetrics(ctx context.Context, metrics []model.Metric) error {
+	err := ps.MemStorage.UpdateMetrics(ctx, metrics)
 	if err != nil {
 		return fmt.Errorf("error UpdateMetrics: %w", err)
 	}
