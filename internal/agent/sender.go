@@ -7,6 +7,8 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"slices"
+	"time"
 
 	"github.com/nikitaw13/metricscollector/internal/model"
 )
@@ -14,19 +16,30 @@ import (
 // Sender is responsible for sending collected metrics to the server
 // as a single batched HTTP POST request.
 type Sender struct {
-	BaseURL string
-	Storage Storage
-	Client  http.Client
+	baseURL  string
+	storage  Storage
+	client   http.Client
+	timeouts []time.Duration
+}
+
+// NewSender creates a Sender with the given base URL, storage, HTTP client, and retry backoff timeouts.
+func NewSender(baseURL string, storage Storage, client http.Client, timeouts []time.Duration) *Sender {
+	return &Sender{
+		baseURL:  baseURL,
+		storage:  storage,
+		client:   client,
+		timeouts: slices.Clone(timeouts),
+	}
 }
 
 // Run performs a one-shot send of all stored gauge and counter metrics to the server.
 // Counters are drained into the batch before sending; if delivery fails, their
 // drained values are merged back into storage for the next attempt.
 func (s *Sender) Run() {
-	updatesURL := fmt.Sprintf("%s/updates", s.BaseURL)
+	updatesURL := fmt.Sprintf("%s/updates", s.baseURL)
 	var metrics []model.Metric
 
-	for metricName, value := range s.Storage.GetAllGauges() {
+	for metricName, value := range s.storage.GetAllGauges() {
 		metric := model.Metric{
 			Type:  model.Gauge,
 			ID:    metricName,
@@ -35,7 +48,7 @@ func (s *Sender) Run() {
 		metrics = append(metrics, metric)
 	}
 
-	drained := s.Storage.DrainCounters()
+	drained := s.storage.DrainCounters()
 	for metricName, value := range drained {
 		metric := model.Metric{
 			Type:  model.Counter,
@@ -49,7 +62,7 @@ func (s *Sender) Run() {
 	committed := false
 	defer func() {
 		if !committed {
-			restoreCounters(s.Storage, drained)
+			restoreCounters(s.storage, drained)
 		}
 	}()
 
@@ -79,10 +92,7 @@ func (s *Sender) Run() {
 		return
 	}
 
-	req.Header.Set("Content-Type", "application/json; charset=utf-8")
-	req.Header.Set("Content-Encoding", "gzip")
-
-	resp, err := s.Client.Do(req)
+	resp, err := s.sendWithRetries(req)
 	if err != nil {
 		log.Println(err)
 		return
@@ -95,6 +105,35 @@ func (s *Sender) Run() {
 		return
 	}
 	committed = true
+}
+
+// sendWithRetries sets the JSON and gzip content headers, then sends the request, retrying transport failures with the configured backoff.
+func (s *Sender) sendWithRetries(req *http.Request) (*http.Response, error) {
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	req.Header.Set("Content-Encoding", "gzip")
+
+	resp, err := s.client.Do(req)
+	if err != nil {
+		log.Println(err)
+		for i := 0; i < len(s.timeouts); i++ {
+			time.Sleep(s.timeouts[i])
+
+			req.Body, err = req.GetBody()
+			if err != nil {
+				return nil, err
+			}
+			resp, err = s.client.Do(req)
+			if err != nil {
+				log.Printf("retry %d/%d failed: %v", i+1, len(s.timeouts), err)
+				continue
+			}
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
+	return resp, nil
 }
 
 // restoreCounters merges drained counter values back into storage after a

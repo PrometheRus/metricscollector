@@ -78,13 +78,12 @@ func TestSendMetrics(t *testing.T) {
 	ts := httptest.NewServer(testHandler)
 	defer ts.Close()
 
-	sender := &Sender{
-		BaseURL: ts.URL,
-		Storage: storage,
-		Client: http.Client{
-			Timeout: 5 * time.Second,
-		},
-	}
+	sender := NewSender(
+		ts.URL,
+		storage,
+		http.Client{Timeout: 5 * time.Second},
+		[]time.Duration{1 * time.Second, 3 * time.Second, 5 * time.Second},
+	)
 
 	sender.Run()
 
@@ -131,13 +130,12 @@ func TestResetCounterOnSuccess(t *testing.T) {
 	ts := httptest.NewServer(testHandler)
 	defer ts.Close()
 
-	sender := &Sender{
-		BaseURL: ts.URL,
-		Storage: storage,
-		Client: http.Client{
-			Timeout: 5 * time.Second,
-		},
-	}
+	sender := NewSender(
+		ts.URL,
+		storage,
+		http.Client{Timeout: 5 * time.Second},
+		[]time.Duration{1 * time.Second, 3 * time.Second, 5 * time.Second},
+	)
 
 	sender.Run()
 
@@ -166,13 +164,12 @@ func TestKeepCounterOnError(t *testing.T) {
 	ts := httptest.NewServer(testHandler)
 	defer ts.Close()
 
-	sender := &Sender{
-		BaseURL: ts.URL,
-		Storage: storage,
-		Client: http.Client{
-			Timeout: 5 * time.Second,
-		},
-	}
+	sender := NewSender(
+		ts.URL,
+		storage,
+		http.Client{Timeout: 5 * time.Second},
+		[]time.Duration{1 * time.Second, 3 * time.Second, 5 * time.Second},
+	)
 
 	sender.Run()
 
@@ -187,6 +184,7 @@ func TestKeepCounterOnError(t *testing.T) {
 // TestNoRequestsWhenStorageEmpty verifies that Run() sends nothing
 // when the storage holds no metrics.
 func TestNoRequestsWhenStorageEmpty(t *testing.T) {
+	storage := NewAgentStorage()
 	var requestCount atomic.Int32
 
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -195,11 +193,12 @@ func TestNoRequestsWhenStorageEmpty(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	sender := &Sender{
-		BaseURL: ts.URL,
-		Storage: NewAgentStorage(),
-		Client:  http.Client{Timeout: 5 * time.Second},
-	}
+	sender := NewSender(
+		ts.URL,
+		storage,
+		http.Client{Timeout: 5 * time.Second},
+		[]time.Duration{1 * time.Second, 3 * time.Second, 5 * time.Second},
+	)
 
 	sender.Run()
 
@@ -221,11 +220,12 @@ func TestKeepCounterOnNetworkError(t *testing.T) {
 	}))
 	ts.Close() // make the server unreachable
 
-	sender := &Sender{
-		BaseURL: ts.URL,
-		Storage: storage,
-		Client:  http.Client{Timeout: 5 * time.Second},
-	}
+	sender := NewSender(
+		ts.URL,
+		storage,
+		http.Client{Timeout: 5 * time.Second},
+		[]time.Duration{1 * time.Millisecond, 3 * time.Millisecond, 5 * time.Millisecond},
+	)
 
 	sender.Run()
 
@@ -235,4 +235,161 @@ func TestKeepCounterOnNetworkError(t *testing.T) {
 			assert.Equal(t, initialValue, value)
 		})
 	}
+}
+
+// retryTransport simulates transient network failures: the first `failures`
+// attempts return a transport error, later attempts are delegated to the
+// underlying transport. It records a timestamp for every attempt.
+type retryTransport struct {
+	failures int
+	base     http.RoundTripper
+
+	mu       sync.Mutex
+	attempts []time.Time
+}
+
+func (t *retryTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	t.mu.Lock()
+	t.attempts = append(t.attempts, time.Now())
+	n := len(t.attempts)
+	t.mu.Unlock()
+
+	if n <= t.failures {
+		return nil, fmt.Errorf("attempt %d: simulated connection reset", n)
+	}
+	return t.base.RoundTrip(req)
+}
+
+// TestRetrySucceedsAfterTransientFailures verifies that the sender retries
+// transport errors and delivers the batch on a later attempt; the retried
+// request must carry an intact gzip-compressed JSON body.
+func TestRetrySucceedsAfterTransientFailures(t *testing.T) {
+	storage := NewAgentStorage()
+	storage.SetGauge("retry_gauge", 42.5)
+	storage.AddCounter("retry_counter", 7)
+
+	var mu sync.Mutex
+	received := map[string]bool{}
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gz, err := gzip.NewReader(r.Body)
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		defer gz.Close()
+
+		var metrics []model.Metric
+		if err := json.NewDecoder(gz).Decode(&metrics); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		mu.Lock()
+		for _, metric := range metrics {
+			received[metric.ID] = true
+		}
+		mu.Unlock()
+
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	rt := &retryTransport{failures: 2, base: http.DefaultTransport}
+	sender := NewSender(
+		ts.URL,
+		storage,
+		http.Client{Transport: rt, Timeout: 5 * time.Second},
+		[]time.Duration{1 * time.Millisecond, 3 * time.Millisecond, 5 * time.Millisecond},
+	)
+
+	sender.Run()
+
+	assert.Equal(t, 3, len(rt.attempts), "two failed attempts plus one successful retry expected")
+	assert.True(t, received["retry_gauge"], "gauge must be delivered after retries")
+	assert.True(t, received["retry_counter"], "counter must be delivered after retries")
+
+	value, _ := storage.GetCounter("retry_counter")
+	assert.Equal(t, int64(0), value, "counter must be reset after successful retry delivery")
+}
+
+// TestRetrySucceedsOnLastAttempt verifies that the batch is delivered when
+// only the final allowed retry succeeds.
+func TestRetrySucceedsOnLastAttempt(t *testing.T) {
+	storage := NewAgentStorage()
+	storage.AddCounter("last_chance_counter", 3)
+
+	var requestCount atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+
+	timeouts := []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond}
+	rt := &retryTransport{failures: len(timeouts), base: http.DefaultTransport}
+	sender := NewSender(ts.URL, storage, http.Client{Transport: rt, Timeout: 5 * time.Second}, timeouts)
+
+	sender.Run()
+
+	assert.Equal(t, int32(1), requestCount.Load(), "exactly one request must reach the server")
+	value, _ := storage.GetCounter("last_chance_counter")
+	assert.Equal(t, int64(0), value, "counter must be reset when the last retry succeeds")
+}
+
+// TestRetryExhaustedRestoresCounters verifies that after exhausting all
+// retries the drained counters are merged back into storage and that the
+// configured backoff intervals are respected between attempts.
+func TestRetryExhaustedRestoresCounters(t *testing.T) {
+	storage := NewAgentStorage()
+	storage.AddCounter("exhausted_counter", 11)
+
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Error("server must not be reached when every attempt fails")
+	}))
+	defer ts.Close()
+
+	timeouts := []time.Duration{5 * time.Millisecond, 10 * time.Millisecond, 15 * time.Millisecond}
+	rt := &retryTransport{failures: 100, base: http.DefaultTransport}
+	sender := NewSender(ts.URL, storage, http.Client{Transport: rt, Timeout: 5 * time.Second}, timeouts)
+
+	sender.Run()
+
+	assert.Equal(t, len(timeouts)+1, len(rt.attempts), "initial attempt plus one retry per timeout expected")
+
+	value, _ := storage.GetCounter("exhausted_counter")
+	assert.Equal(t, int64(11), value, "counter must be restored after exhausted retries")
+
+	for i := 1; i < len(rt.attempts); i++ {
+		gap := rt.attempts[i].Sub(rt.attempts[i-1])
+		assert.GreaterOrEqual(t, gap, timeouts[i-1], "retry %d must wait at least %v", i, timeouts[i-1])
+	}
+}
+
+// TestNoRetryOnServerErrorResponse documents that HTTP-level errors are not
+// retried: the batch is dropped until the next report interval and the
+// drained counters are preserved.
+func TestNoRetryOnServerErrorResponse(t *testing.T) {
+	storage := NewAgentStorage()
+	storage.AddCounter("server_error_counter", 5)
+
+	var requestCount atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount.Add(1)
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+
+	sender := NewSender(
+		ts.URL,
+		storage,
+		http.Client{Timeout: 5 * time.Second},
+		[]time.Duration{time.Millisecond, 3 * time.Millisecond, 5 * time.Millisecond},
+	)
+
+	sender.Run()
+
+	assert.Equal(t, int32(1), requestCount.Load(), "server error responses must not be retried")
+	value, _ := storage.GetCounter("server_error_counter")
+	assert.Equal(t, int64(5), value, "counter must be preserved on server error response")
 }

@@ -5,7 +5,7 @@ import "testing"
 // TestAllMetricsExist verifies that collector populates all required gauge and counter metrics.
 func TestAllMetricsExist(t *testing.T) {
 	storage := NewAgentStorage()
-	collector := &Collector{Storage: storage}
+	collector := NewCollector(storage)
 	collector.Run()
 	for _, metric := range GaugeMetrics {
 		_, err := storage.GetGauge(metric)
@@ -24,7 +24,7 @@ func TestAllMetricsExist(t *testing.T) {
 // TestPollCountIncrement verifies that PollCount increases by 1 on each collector run.
 func TestPollCountIncrement(t *testing.T) {
 	storage := NewAgentStorage()
-	collector := &Collector{Storage: storage}
+	collector := NewCollector(storage)
 
 	for i := 1; i < 100; i++ {
 		collector.Run()
