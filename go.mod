@@ -1,6 +1,6 @@
 module github.com/nikitaw13/metricscollector
 
-go 1.25.1
+go 1.27
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2

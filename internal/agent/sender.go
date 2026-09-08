@@ -7,8 +7,6 @@ import (
 	"io"
 	"log"
 	"net/http"
-	"slices"
-	"time"
 
 	"github.com/nikitaw13/metricscollector/internal/model"
 )
@@ -16,19 +14,17 @@ import (
 // Sender is responsible for sending collected metrics to the server
 // as a single batched HTTP POST request.
 type Sender struct {
-	baseURL  string
-	storage  Storage
-	client   http.Client
-	timeouts []time.Duration
+	baseURL string
+	storage Storage
+	client  HTTPClient
 }
 
-// NewSender creates a Sender with the given base URL, storage, HTTP client, and retry backoff timeouts.
-func NewSender(baseURL string, storage Storage, client http.Client, timeouts []time.Duration) *Sender {
+// NewSender creates a Sender with the given base URL, storage, and HTTP client.
+func NewSender(baseURL string, storage Storage, client HTTPClient) *Sender {
 	return &Sender{
-		baseURL:  baseURL,
-		storage:  storage,
-		client:   client,
-		timeouts: slices.Clone(timeouts),
+		baseURL: baseURL,
+		storage: storage,
+		client:  client,
 	}
 }
 
@@ -92,7 +88,9 @@ func (s *Sender) Run() {
 		return
 	}
 
-	resp, err := s.sendWithRetries(req)
+	req.Header.Set("Content-Type", "application/json; charset=utf-8")
+	req.Header.Set("Content-Encoding", "gzip")
+	resp, err := s.client.Do(req)
 	if err != nil {
 		log.Println(err)
 		return
@@ -105,35 +103,6 @@ func (s *Sender) Run() {
 		return
 	}
 	committed = true
-}
-
-// sendWithRetries sets the JSON and gzip content headers, then sends the request, retrying transport failures with the configured backoff.
-func (s *Sender) sendWithRetries(req *http.Request) (*http.Response, error) {
-	req.Header.Set("Content-Type", "application/json; charset=utf-8")
-	req.Header.Set("Content-Encoding", "gzip")
-
-	resp, err := s.client.Do(req)
-	if err != nil {
-		log.Println(err)
-		for i := 0; i < len(s.timeouts); i++ {
-			time.Sleep(s.timeouts[i])
-
-			req.Body, err = req.GetBody()
-			if err != nil {
-				return nil, err
-			}
-			resp, err = s.client.Do(req)
-			if err != nil {
-				log.Printf("retry %d/%d failed: %v", i+1, len(s.timeouts), err)
-				continue
-			}
-			break
-		}
-		if err != nil {
-			return nil, err
-		}
-	}
-	return resp, nil
 }
 
 // restoreCounters merges drained counter values back into storage after a

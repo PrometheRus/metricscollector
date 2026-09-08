@@ -78,11 +78,16 @@ func TestSendMetrics(t *testing.T) {
 	ts := httptest.NewServer(testHandler)
 	defer ts.Close()
 
+	retries := []time.Duration{1 * time.Second, 3 * time.Second, 5 * time.Second}
+	client := NewClientWithRetries(
+		retries,
+		&http.Client{Timeout: 5 * time.Second},
+	)
+
 	sender := NewSender(
 		ts.URL,
 		storage,
-		http.Client{Timeout: 5 * time.Second},
-		[]time.Duration{1 * time.Second, 3 * time.Second, 5 * time.Second},
+		client,
 	)
 
 	sender.Run()
@@ -130,11 +135,15 @@ func TestResetCounterOnSuccess(t *testing.T) {
 	ts := httptest.NewServer(testHandler)
 	defer ts.Close()
 
+	retries := []time.Duration{1 * time.Second, 3 * time.Second, 5 * time.Second}
+	client := NewClientWithRetries(
+		retries,
+		&http.Client{Timeout: 5 * time.Second},
+	)
 	sender := NewSender(
 		ts.URL,
 		storage,
-		http.Client{Timeout: 5 * time.Second},
-		[]time.Duration{1 * time.Second, 3 * time.Second, 5 * time.Second},
+		client,
 	)
 
 	sender.Run()
@@ -164,11 +173,15 @@ func TestKeepCounterOnError(t *testing.T) {
 	ts := httptest.NewServer(testHandler)
 	defer ts.Close()
 
+	retries := []time.Duration{1 * time.Second, 3 * time.Second, 5 * time.Second}
+	client := NewClientWithRetries(
+		retries,
+		&http.Client{Timeout: 5 * time.Second},
+	)
 	sender := NewSender(
 		ts.URL,
 		storage,
-		http.Client{Timeout: 5 * time.Second},
-		[]time.Duration{1 * time.Second, 3 * time.Second, 5 * time.Second},
+		client,
 	)
 
 	sender.Run()
@@ -193,11 +206,15 @@ func TestNoRequestsWhenStorageEmpty(t *testing.T) {
 	}))
 	defer ts.Close()
 
+	retries := []time.Duration{1 * time.Second, 3 * time.Second, 5 * time.Second}
+	client := NewClientWithRetries(
+		retries,
+		&http.Client{Timeout: 5 * time.Second},
+	)
 	sender := NewSender(
 		ts.URL,
 		storage,
-		http.Client{Timeout: 5 * time.Second},
-		[]time.Duration{1 * time.Second, 3 * time.Second, 5 * time.Second},
+		client,
 	)
 
 	sender.Run()
@@ -220,11 +237,15 @@ func TestKeepCounterOnNetworkError(t *testing.T) {
 	}))
 	ts.Close() // make the server unreachable
 
+	retries := []time.Duration{1 * time.Millisecond, 3 * time.Millisecond, 5 * time.Millisecond}
+	client := NewClientWithRetries(
+		retries,
+		&http.Client{Timeout: 5 * time.Second},
+	)
 	sender := NewSender(
 		ts.URL,
 		storage,
-		http.Client{Timeout: 5 * time.Second},
-		[]time.Duration{1 * time.Millisecond, 3 * time.Millisecond, 5 * time.Millisecond},
+		client,
 	)
 
 	sender.Run()
@@ -296,12 +317,16 @@ func TestRetrySucceedsAfterTransientFailures(t *testing.T) {
 	}))
 	defer ts.Close()
 
+	retries := []time.Duration{1 * time.Millisecond, 3 * time.Millisecond, 5 * time.Millisecond}
 	rt := &retryTransport{failures: 2, base: http.DefaultTransport}
+	client := NewClientWithRetries(
+		retries,
+		&http.Client{Timeout: 5 * time.Second, Transport: rt},
+	)
 	sender := NewSender(
 		ts.URL,
 		storage,
-		http.Client{Transport: rt, Timeout: 5 * time.Second},
-		[]time.Duration{1 * time.Millisecond, 3 * time.Millisecond, 5 * time.Millisecond},
+		client,
 	)
 
 	sender.Run()
@@ -327,9 +352,14 @@ func TestRetrySucceedsOnLastAttempt(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	timeouts := []time.Duration{time.Millisecond, time.Millisecond, time.Millisecond}
-	rt := &retryTransport{failures: len(timeouts), base: http.DefaultTransport}
-	sender := NewSender(ts.URL, storage, http.Client{Transport: rt, Timeout: 5 * time.Second}, timeouts)
+	retries := []time.Duration{1 * time.Millisecond, 3 * time.Millisecond, 5 * time.Millisecond}
+	rt := &retryTransport{failures: len(retries), base: http.DefaultTransport}
+	client := NewClientWithRetries(
+		retries,
+		&http.Client{Timeout: 5 * time.Second, Transport: rt},
+	)
+
+	sender := NewSender(ts.URL, storage, client)
 
 	sender.Run()
 
@@ -350,20 +380,25 @@ func TestRetryExhaustedRestoresCounters(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	timeouts := []time.Duration{5 * time.Millisecond, 10 * time.Millisecond, 15 * time.Millisecond}
+	retries := []time.Duration{5 * time.Millisecond, 10 * time.Millisecond, 15 * time.Millisecond}
 	rt := &retryTransport{failures: 100, base: http.DefaultTransport}
-	sender := NewSender(ts.URL, storage, http.Client{Transport: rt, Timeout: 5 * time.Second}, timeouts)
+	client := NewClientWithRetries(
+		retries,
+		&http.Client{Timeout: 5 * time.Second, Transport: rt},
+	)
+
+	sender := NewSender(ts.URL, storage, client)
 
 	sender.Run()
 
-	assert.Equal(t, len(timeouts)+1, len(rt.attempts), "initial attempt plus one retry per timeout expected")
+	assert.Equal(t, len(retries)+1, len(rt.attempts), "initial attempt plus one retry per timeout expected")
 
 	value, _ := storage.GetCounter("exhausted_counter")
 	assert.Equal(t, int64(11), value, "counter must be restored after exhausted retries")
 
 	for i := 1; i < len(rt.attempts); i++ {
 		gap := rt.attempts[i].Sub(rt.attempts[i-1])
-		assert.GreaterOrEqual(t, gap, timeouts[i-1], "retry %d must wait at least %v", i, timeouts[i-1])
+		assert.GreaterOrEqual(t, gap, retries[i-1], "retry %d must wait at least %v", i, retries[i-1])
 	}
 }
 
@@ -381,11 +416,15 @@ func TestNoRetryOnServerErrorResponse(t *testing.T) {
 	}))
 	defer ts.Close()
 
+	retries := []time.Duration{1 * time.Millisecond, 3 * time.Millisecond, 5 * time.Millisecond}
+	client := NewClientWithRetries(
+		retries,
+		&http.Client{Timeout: 5 * time.Second},
+	)
 	sender := NewSender(
 		ts.URL,
 		storage,
-		http.Client{Timeout: 5 * time.Second},
-		[]time.Duration{time.Millisecond, 3 * time.Millisecond, 5 * time.Millisecond},
+		client,
 	)
 
 	sender.Run()
