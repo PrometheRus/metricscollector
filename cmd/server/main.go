@@ -35,7 +35,7 @@ func run() error {
 	switch {
 	// Database storage
 	case flagDatabaseDSN != "":
-		ps, err := repository.NewPostgresStorageFromDSN(flagDatabaseDSN, flagMigrationPath, timeouts)
+		ps, err := repository.NewPostgresStorageFromDSN(flagDatabaseDSN, flagMigrationPath, timeouts, handler.Logger)
 
 		if err != nil {
 			handler.Logger.Error("failed to initialize postgres storage", zap.Error(err))

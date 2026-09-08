@@ -5,12 +5,12 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log"
 	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	"github.com/golang-migrate/migrate/v4/database/pgx/v5"
 	"github.com/nikitaw13/metricscollector/internal/model"
+	"go.uber.org/zap"
 
 	_ "github.com/golang-migrate/migrate/v4/source/file"
 	_ "github.com/jackc/pgx/v5/stdlib"
@@ -35,6 +35,7 @@ type counterRow struct {
 type PostgresStorage struct {
 	db       *sql.DB
 	timeouts []time.Duration
+	logger   *zap.Logger
 }
 
 // Close closes the underlying database connection.
@@ -75,16 +76,17 @@ var (
 	FROM %s;`, gaugeTableName)
 )
 
-// NewPostgresStorage creates a new PostgresStorage instance.
-func NewPostgresStorage(db *sql.DB, timeouts []time.Duration) *PostgresStorage {
+// NewPostgresStorage creates a PostgresStorage backed by db, with retry backoff timeouts and the provided logger.
+func NewPostgresStorage(db *sql.DB, timeouts []time.Duration, logger *zap.Logger) *PostgresStorage {
 	return &PostgresStorage{
 		db:       db,
 		timeouts: timeouts,
+		logger:   logger,
 	}
 }
 
-// NewPostgresStorageFromDSN opens a PostgreSQL connection using the given DSN, runs migrations, and returns a PostgresStorage.
-func NewPostgresStorageFromDSN(dsn, migrationsPath string, timeouts []time.Duration) (*PostgresStorage, error) {
+// NewPostgresStorageFromDSN opens a PostgreSQL connection using the given DSN, runs migrations with progress logged via the provided logger, and returns a PostgresStorage.
+func NewPostgresStorageFromDSN(dsn, migrationsPath string, timeouts []time.Duration, logger *zap.Logger) (*PostgresStorage, error) {
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open standard sql DB: %w", err)
@@ -104,18 +106,18 @@ func NewPostgresStorageFromDSN(dsn, migrationsPath string, timeouts []time.Durat
 		return nil, fmt.Errorf("failed to initialize migrator: %w", err)
 	}
 
-	log.Println("Applying migrations...")
+	logger.Info("applying migrations")
 	if err := migrator.Up(); err != nil {
 		if errors.Is(err, migrate.ErrNoChange) {
-			log.Println("No new migrations to apply.")
+			logger.Info("no new migrations to apply")
 		} else {
 			return nil, fmt.Errorf("migration failed: %w", err)
 		}
 	} else {
-		log.Println("Migrations applied successfully.")
+		logger.Info("migrations applied successfully")
 	}
 
-	postgresStorage := NewPostgresStorage(db, timeouts)
+	postgresStorage := NewPostgresStorage(db, timeouts, logger)
 	return postgresStorage, nil
 }
 
@@ -360,7 +362,9 @@ func (ps *PostgresStorage) updateMetricsTx(ctx context.Context, metrics []model.
 				return fmt.Errorf("error executing setGauge: %w", err)
 			}
 		default:
-			log.Printf("unknown metric type: %s", metric.Type)
+			ps.logger.Debug("unknown metric type",
+				zap.String("metric_type", metric.Type),
+			)
 		}
 
 	}
@@ -392,7 +396,11 @@ func (ps *PostgresStorage) withRetries(operation func() error) error {
 		}
 
 		lastErr = err
-		log.Printf("attempt %d/%d failed: %v", attempt+1, len(ps.timeouts)+1, err)
+		ps.logger.Debug("retry attempt failed",
+			zap.Int("attempt", attempt+1),
+			zap.Int("total_attempts", len(ps.timeouts)+1),
+			zap.Error(err),
+		)
 	}
 	return fmt.Errorf("operation aborted after %d attempts: %w", len(ps.timeouts)+1, lastErr)
 }

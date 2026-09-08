@@ -13,6 +13,7 @@ import (
 	"github.com/nikitaw13/metricscollector/internal/model"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 // Query patterns match the SQL statements built in postgres.go. sqlmock matches
@@ -40,7 +41,7 @@ func newMockStorage(t *testing.T) (*PostgresStorage, sqlmock.Sqlmock) {
 		_ = db.Close()
 	})
 
-	return NewPostgresStorage(db, timeouts), mock
+	return NewPostgresStorage(db, timeouts, zap.NewNop()), mock
 }
 
 // TestPostgresStorage_SetGauge verifies the gauge upsert and error wrapping on database failures.
@@ -653,7 +654,7 @@ func TestPostgresStorage_AddCounter_Integration(t *testing.T) {
 	}
 
 	var timeouts = []time.Duration{1 * time.Millisecond, 3 * time.Millisecond, 5 * time.Millisecond}
-	ps, err := NewPostgresStorageFromDSN(dsn, "../../migrations", timeouts)
+	ps, err := NewPostgresStorageFromDSN(dsn, "../../migrations", timeouts, zap.NewNop())
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, ps.Close()) })
 
@@ -683,7 +684,7 @@ func TestPostgresStorage_UpdateMetrics_Integration(t *testing.T) {
 	}
 
 	var timeouts = []time.Duration{1 * time.Millisecond, 3 * time.Millisecond, 5 * time.Millisecond}
-	ps, err := NewPostgresStorageFromDSN(dsn, "../../migrations", timeouts)
+	ps, err := NewPostgresStorageFromDSN(dsn, "../../migrations", timeouts, zap.NewNop())
 	require.NoError(t, err)
 	t.Cleanup(func() { assert.NoError(t, ps.Close()) })
 
