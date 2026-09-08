@@ -62,12 +62,13 @@ func run() error {
 		}
 
 		storageToUse = persistentMemStorage
-		dbToUse = nil
+		dbToUse = persistentMemStorage
 
 	// In-memory storage
 	default:
-		storageToUse = repository.NewMemStorage()
-		dbToUse = nil
+		memStorage := repository.NewMemStorage()
+		storageToUse = memStorage
+		dbToUse = memStorage
 	}
 
 	metricsHandler := handler.NewMetricsHandler(storageToUse, dbToUse)

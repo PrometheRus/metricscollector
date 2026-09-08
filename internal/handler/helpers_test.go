@@ -24,15 +24,13 @@ const defaultCounterValue = 234
 
 // GetTestServer returns an httptest.Server backed by a fresh MemStorage
 // pre-populated with one gauge and one counter metric named "___test___".
-// Database is nil; use GetTestServerWithDatabase for DB-dependent tests.
+// The storage also serves as the database pinger, so /ping always succeeds;
+// use GetTestServerWithDatabase for DB-dependent tests.
 func GetTestServer() (server *httptest.Server) {
 	storage := repository.NewMemStorage()
 	storage.SetGauge("___test___", defaultGaugeValue)
 	storage.AddCounter("___test___", defaultCounterValue)
-	metricsHandler := MetricsHandler{
-		storage:  storage,
-		database: nil,
-	}
+	metricsHandler := NewMetricsHandler(storage, storage)
 	router := metricsHandler.NewRouter()
 	server = httptest.NewServer(router)
 	return
@@ -55,6 +53,7 @@ var expectedHTMLResponse = `<html><body>
 `
 
 // GetTestServerWithRepository returns an httptest.Server backed by the provided Repository for tests needing a custom storage.
+// The database pinger is a fresh in-memory storage, so /ping succeeds without external dependencies.
 func GetTestServerWithRepository(repo Repository) *httptest.Server {
-	return httptest.NewServer(NewMetricsHandler(repo, nil).NewRouter())
+	return httptest.NewServer(NewMetricsHandler(repo, repository.NewMemStorage()).NewRouter())
 }

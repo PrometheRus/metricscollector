@@ -124,3 +124,9 @@ func (ms *MemStorage) LoadMetrics(metrics []model.Metric) (err error) {
 
 	return nil
 }
+
+// PingContext implements DBPinger for in-memory storage: there is no
+// external database to check, so the ping always succeeds.
+func (ms *MemStorage) PingContext(ctx context.Context) error {
+	return nil
+}

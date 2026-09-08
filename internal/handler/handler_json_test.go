@@ -538,8 +538,9 @@ func ptrFloat64(value float64) *float64 { return &value }
 func ptrInt64(value int64) *int64 { return &value }
 
 // TestJSONStorageErrors verifies that storage failures are mapped to HTTP 500
-// across the JSON endpoints, while a wrapped model.ErrMetricNotFound still
-// maps to 404 on reads.
+// across the JSON endpoints with the generic status text that hides the
+// underlying error, while a wrapped model.ErrMetricNotFound still maps to
+// 404 on reads with the original error message.
 func TestJSONStorageErrors(t *testing.T) {
 	t.Parallel()
 
@@ -548,11 +549,12 @@ func TestJSONStorageErrors(t *testing.T) {
 	notFoundCounter := fmt.Errorf("counter err_counter %w", model.ErrMetricNotFound)
 
 	tests := []struct {
-		name  string
-		setup func(ctrl *gomock.Controller) Repository
-		path  string
-		body  string
-		want  int
+		name        string
+		setup       func(ctrl *gomock.Controller) Repository
+		path        string
+		body        string
+		want        int
+		wantMessage string
 	}{
 		{
 			name: "update gauge storage error returns 500",
@@ -561,9 +563,10 @@ func TestJSONStorageErrors(t *testing.T) {
 				repo.EXPECT().SetGauge("err_gauge", 42.5).Return(storageErr)
 				return repo
 			},
-			path: "/update",
-			body: `{"type":"gauge","id":"err_gauge","value":42.5}`,
-			want: http.StatusInternalServerError,
+			path:        "/update",
+			body:        `{"type":"gauge","id":"err_gauge","value":42.5}`,
+			want:        http.StatusInternalServerError,
+			wantMessage: http.StatusText(http.StatusInternalServerError),
 		},
 		{
 			name: "update counter storage error returns 500",
@@ -572,9 +575,10 @@ func TestJSONStorageErrors(t *testing.T) {
 				repo.EXPECT().AddCounter("err_counter", int64(5)).Return(int64(0), storageErr)
 				return repo
 			},
-			path: "/update",
-			body: `{"type":"counter","id":"err_counter","delta":5}`,
-			want: http.StatusInternalServerError,
+			path:        "/update",
+			body:        `{"type":"counter","id":"err_counter","delta":5}`,
+			want:        http.StatusInternalServerError,
+			wantMessage: http.StatusText(http.StatusInternalServerError),
 		},
 		{
 			name: "updates batch storage error returns 500",
@@ -583,9 +587,10 @@ func TestJSONStorageErrors(t *testing.T) {
 				repo.EXPECT().UpdateMetrics(gomock.Any(), gomock.Any()).Return(storageErr)
 				return repo
 			},
-			path: "/updates/",
-			body: `[{"type":"gauge","id":"err_gauge","value":42.5}]`,
-			want: http.StatusInternalServerError,
+			path:        "/updates/",
+			body:        `[{"type":"gauge","id":"err_gauge","value":42.5}]`,
+			want:        http.StatusInternalServerError,
+			wantMessage: http.StatusText(http.StatusInternalServerError),
 		},
 		{
 			name: "value gauge storage error returns 500",
@@ -594,9 +599,10 @@ func TestJSONStorageErrors(t *testing.T) {
 				repo.EXPECT().GetGauge("err_gauge").Return(float64(0), storageErr)
 				return repo
 			},
-			path: "/value",
-			body: `{"type":"gauge","id":"err_gauge"}`,
-			want: http.StatusInternalServerError,
+			path:        "/value",
+			body:        `{"type":"gauge","id":"err_gauge"}`,
+			want:        http.StatusInternalServerError,
+			wantMessage: http.StatusText(http.StatusInternalServerError),
 		},
 		{
 			name: "value gauge metric not found returns 404",
@@ -605,9 +611,10 @@ func TestJSONStorageErrors(t *testing.T) {
 				repo.EXPECT().GetGauge("err_gauge").Return(float64(0), notFoundGauge)
 				return repo
 			},
-			path: "/value",
-			body: `{"type":"gauge","id":"err_gauge"}`,
-			want: http.StatusNotFound,
+			path:        "/value",
+			body:        `{"type":"gauge","id":"err_gauge"}`,
+			want:        http.StatusNotFound,
+			wantMessage: notFoundGauge.Error(),
 		},
 		{
 			name: "value counter storage error returns 500",
@@ -616,9 +623,10 @@ func TestJSONStorageErrors(t *testing.T) {
 				repo.EXPECT().GetCounter("err_counter").Return(int64(0), storageErr)
 				return repo
 			},
-			path: "/value",
-			body: `{"type":"counter","id":"err_counter"}`,
-			want: http.StatusInternalServerError,
+			path:        "/value",
+			body:        `{"type":"counter","id":"err_counter"}`,
+			want:        http.StatusInternalServerError,
+			wantMessage: http.StatusText(http.StatusInternalServerError),
 		},
 		{
 			name: "value counter metric not found returns 404",
@@ -627,9 +635,10 @@ func TestJSONStorageErrors(t *testing.T) {
 				repo.EXPECT().GetCounter("err_counter").Return(int64(0), notFoundCounter)
 				return repo
 			},
-			path: "/value",
-			body: `{"type":"counter","id":"err_counter"}`,
-			want: http.StatusNotFound,
+			path:        "/value",
+			body:        `{"type":"counter","id":"err_counter"}`,
+			want:        http.StatusNotFound,
+			wantMessage: notFoundCounter.Error(),
 		},
 	}
 
@@ -644,6 +653,60 @@ func TestJSONStorageErrors(t *testing.T) {
 			resp := testJSONRequest(t, ts, http.MethodPost, tc.path, tc.body, "application/json")
 			assert.Equal(t, tc.want, resp.StatusCode)
 			assert.Equal(t, expectedJSONContentType, resp.Header.Get("Content-Type"))
+
+			var got apiError
+			require.NoError(t, json.Unmarshal([]byte(resp.body), &got))
+			assert.Equal(t, tc.want, got.Code)
+			assert.Equal(t, tc.wantMessage, got.Message)
+			assert.NotContains(t, resp.body, storageErr.Error(), "error responses must not leak storage error details")
+		})
+	}
+}
+
+// TestJSONClientErrorMessages verifies that 4xx responses carry the
+// client-safe messages produced by decoding and validation — the
+// counterpart of the 500 rule that hides internal error details.
+func TestJSONClientErrorMessages(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		path         string
+		body         string
+		wantContains string
+	}{
+		{
+			name:         "value invalid JSON syntax carries decode message",
+			path:         "/value",
+			body:         `{"type": gauge}`,
+			wantContains: "invalid JSON syntax at offset",
+		},
+		{
+			name:         "value truncated body classified as empty",
+			path:         "/value",
+			body:         `{"type":"gauge", "id":`,
+			wantContains: "request body is empty",
+		},
+		{
+			name:         "update missing type carries validation message",
+			path:         "/update",
+			body:         `{}`,
+			wantContains: "metric type is required",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ts := GetTestServer()
+			t.Cleanup(ts.Close)
+
+			resp := testJSONRequest(t, ts, http.MethodPost, tc.path, tc.body, "application/json")
+
+			var got apiError
+			require.NoError(t, json.Unmarshal([]byte(resp.body), &got))
+			assert.Equal(t, http.StatusBadRequest, got.Code)
+			assert.Contains(t, got.Message, tc.wantContains)
 		})
 	}
 }

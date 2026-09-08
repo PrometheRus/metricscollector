@@ -65,7 +65,7 @@ func (h *MetricsHandler) handleURLRead(w http.ResponseWriter, r *http.Request) {
 	case model.Gauge:
 		value, err := h.storage.GetGauge(metricName)
 		if errors.Is(err, model.ErrMetricNotFound) {
-			Logger.Info("gauge not found", zap.String("metric", metricName))
+			Logger.Debug("gauge not found", zap.String("metric", metricName))
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		}
@@ -79,7 +79,7 @@ func (h *MetricsHandler) handleURLRead(w http.ResponseWriter, r *http.Request) {
 	case model.Counter:
 		delta, err := h.storage.GetCounter(metricName)
 		if errors.Is(err, model.ErrMetricNotFound) {
-			Logger.Info("counter not found", zap.String("metric", metricName))
+			Logger.Debug("counter not found", zap.String("metric", metricName))
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 
@@ -112,7 +112,7 @@ func (h *MetricsHandler) handleURLUpdate(w http.ResponseWriter, r *http.Request)
 
 		parsedValue, err := strconv.ParseFloat(value, 64)
 		if err != nil {
-			Logger.Error("invalid metric value", zap.Error(err))
+			Logger.Debug("invalid metric value", zap.Error(err))
 			http.Error(w, "Invalid metric value", http.StatusBadRequest)
 			return
 		}
@@ -128,7 +128,7 @@ func (h *MetricsHandler) handleURLUpdate(w http.ResponseWriter, r *http.Request)
 
 		parsedValue, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
-			Logger.Error("invalid metric value", zap.Error(err))
+			Logger.Debug("invalid metric value", zap.Error(err))
 			http.Error(w, "Invalid metric value", http.StatusBadRequest)
 			return
 		}
@@ -146,11 +146,6 @@ func (h *MetricsHandler) handleURLUpdate(w http.ResponseWriter, r *http.Request)
 
 // handleDatabasePing responds to GET /ping by checking the database connectivity.
 func (h *MetricsHandler) handleDatabasePing(w http.ResponseWriter, r *http.Request) {
-	if h.database == nil {
-		http.Error(w, "Database not configured", http.StatusInternalServerError)
-		return
-	}
-
 	ctx, cancel := context.WithTimeout(r.Context(), 1*time.Second)
 	defer cancel()
 

@@ -44,15 +44,18 @@ func writeJSON(w http.ResponseWriter, status int, payload any) error {
 	return nil
 }
 
-// writeJSONError logs the error, marshals an apiError, and writes it with the given HTTP status code.
+// writeJSONError logs the error and writes an apiError with the given HTTP status code: server errors (5xx) report only the generic status text so internal details are not leaked, client errors (4xx) keep the original message.
 func writeJSONError(w http.ResponseWriter, status int, err error) {
+	var message string
 	if status >= http.StatusInternalServerError {
 		Logger.Error("request error", zap.Int("status", status), zap.Error(err))
+		message = http.StatusText(status)
 	} else {
-		Logger.Warn("request error", zap.Int("status", status), zap.Error(err))
+		Logger.Debug("request error", zap.Int("status", status), zap.Error(err))
+		message = err.Error()
 	}
 
-	if writeErr := writeJSON(w, status, apiError{Code: status, Message: err.Error()}); writeErr != nil {
+	if writeErr := writeJSON(w, status, apiError{Code: status, Message: message}); writeErr != nil {
 		Logger.Error("failed to write json", zap.Error(writeErr))
 	}
 }

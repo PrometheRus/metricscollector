@@ -78,7 +78,7 @@ func TestSendMetrics(t *testing.T) {
 	ts := httptest.NewServer(testHandler)
 	defer ts.Close()
 
-	retries := []time.Duration{1 * time.Second, 3 * time.Second, 5 * time.Second}
+	retries := []time.Duration{1 * time.Millisecond, 3 * time.Millisecond, 5 * time.Millisecond}
 	client := NewClientWithRetries(
 		retries,
 		&http.Client{Timeout: 5 * time.Second},
@@ -135,7 +135,7 @@ func TestResetCounterOnSuccess(t *testing.T) {
 	ts := httptest.NewServer(testHandler)
 	defer ts.Close()
 
-	retries := []time.Duration{1 * time.Second, 3 * time.Second, 5 * time.Second}
+	retries := []time.Duration{1 * time.Millisecond, 3 * time.Millisecond, 5 * time.Millisecond}
 	client := NewClientWithRetries(
 		retries,
 		&http.Client{Timeout: 5 * time.Second},
@@ -173,7 +173,7 @@ func TestKeepCounterOnError(t *testing.T) {
 	ts := httptest.NewServer(testHandler)
 	defer ts.Close()
 
-	retries := []time.Duration{1 * time.Second, 3 * time.Second, 5 * time.Second}
+	retries := []time.Duration{1 * time.Millisecond, 3 * time.Millisecond, 5 * time.Millisecond}
 	client := NewClientWithRetries(
 		retries,
 		&http.Client{Timeout: 5 * time.Second},
@@ -206,7 +206,7 @@ func TestNoRequestsWhenStorageEmpty(t *testing.T) {
 	}))
 	defer ts.Close()
 
-	retries := []time.Duration{1 * time.Second, 3 * time.Second, 5 * time.Second}
+	retries := []time.Duration{1 * time.Millisecond, 3 * time.Millisecond, 5 * time.Millisecond}
 	client := NewClientWithRetries(
 		retries,
 		&http.Client{Timeout: 5 * time.Second},
