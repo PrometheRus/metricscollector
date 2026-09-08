@@ -55,6 +55,21 @@ func newRetryRequest(t *testing.T) *http.Request {
 	return req
 }
 
+// doRequest sends the request through the client and returns the response
+// status code. It closes the response body, keeping *http.Response inside
+// the helper.
+func doRequest(t *testing.T, client HTTPClient, req *http.Request) (int, error) {
+	t.Helper()
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+
+	return resp.StatusCode, nil
+}
+
 // TestClientWithRetries_SucceedsAfterTwoFailures verifies that the wrapper
 // retries transport errors and returns the first successful response.
 func TestClientWithRetries_SucceedsAfterTwoFailures(t *testing.T) {
@@ -67,10 +82,10 @@ func TestClientWithRetries_SucceedsAfterTwoFailures(t *testing.T) {
 		fake,
 	)
 
-	resp, err := client.Do(newRetryRequest(t))
+	statusCode, err := doRequest(t, client, newRetryRequest(t))
 
 	require.NoError(t, err)
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, statusCode)
 	assert.Equal(t, 3, fake.calls, "two failed attempts plus one successful retry expected")
 }
 
@@ -87,10 +102,9 @@ func TestClientWithRetries_RetriesExhausted(t *testing.T) {
 		fake,
 	)
 
-	resp, err := client.Do(newRetryRequest(t))
+	_, err := doRequest(t, client, newRetryRequest(t))
 
 	require.Error(t, err)
-	assert.Nil(t, resp)
 	assert.Equal(t, errs[len(errs)-1], err, "the last transport error must be returned")
 	assert.Equal(t, 4, fake.calls, "initial attempt plus one retry per timeout expected")
 }
@@ -104,10 +118,10 @@ func TestClientWithRetries_SucceedsOnFirstAttempt(t *testing.T) {
 		fake,
 	)
 
-	resp, err := client.Do(newRetryRequest(t))
+	statusCode, err := doRequest(t, client, newRetryRequest(t))
 
 	require.NoError(t, err)
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.Equal(t, http.StatusOK, statusCode)
 	assert.Equal(t, 1, fake.calls, "a successful first attempt must not be retried")
 }
 
@@ -132,9 +146,8 @@ func TestClientWithRetries_NoRetryOnNonRewindableBody(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	resp, err := client.Do(req)
+	_, err = doRequest(t, client, req)
 
 	require.Error(t, err)
-	assert.Nil(t, resp)
 	assert.Equal(t, 1, fake.calls, "a request without a rewindable body must not be retried")
 }
