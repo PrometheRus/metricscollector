@@ -23,7 +23,7 @@ func parseEnvs() {
 		intervalSec, err := strconv.Atoi(envStoreInterval)
 
 		if err != nil {
-			log.Fatal("Can't convert STORE_INTERVAL")
+			log.Fatal("failed to parse STORE_INTERVAL")
 		}
 		flagStoreInterval = intervalSec
 	}
@@ -38,8 +38,18 @@ func parseEnvs() {
 		shouldRestore, err := strconv.ParseBool(envRestore)
 
 		if err != nil {
-			log.Fatal("Can't convert RESTORE")
+			log.Fatal("failed to parse RESTORE")
 		}
 		flagRestore = shouldRestore
+	}
+
+	envDatabaseDSN, found := os.LookupEnv("DATABASE_DSN")
+	if found {
+		flagDatabaseDSN = envDatabaseDSN
+	}
+
+	envMigrationPath, found := os.LookupEnv("MIGRATION_PATH")
+	if found {
+		flagMigrationPath = envMigrationPath
 	}
 }

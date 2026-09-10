@@ -10,8 +10,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// doRequest sends an HTTP request to the test server and returns the response and body.
-func doRequest(t *testing.T, ts *httptest.Server, method, path string) (*http.Response, string) {
+// doRequest sends an HTTP request to the test server and returns a
+// testResponse with the status code, headers, and body.
+func doRequest(t *testing.T, ts *httptest.Server, method, path string) testResponse {
 	req, err := http.NewRequest(method, ts.URL+path, nil)
 	require.NoError(t, err)
 
@@ -22,9 +23,10 @@ func doRequest(t *testing.T, ts *httptest.Server, method, path string) (*http.Re
 	respBody, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
 
-	return resp, string(respBody)
+	return testResponse{StatusCode: resp.StatusCode, Header: resp.Header, body: string(respBody)}
 }
 
+// testCase holds a single table-driven test case for URL endpoint tests.
 type testCase struct {
 	name   string
 	method string
@@ -39,7 +41,7 @@ type expectedResponse struct {
 	contentType string
 }
 
-// Update: successful metric updates
+// updateTests covers successful metric updates.
 var updateTests = []testCase{
 	{
 		"Counter positive int", http.MethodPost, "/update/counter/test/1000", expectedResponse{
@@ -85,7 +87,7 @@ var updateTests = []testCase{
 	},
 }
 
-// Read: successful fetching metric values and lists
+// readTests covers successful reads of metric values and the metric list.
 var readTests = []testCase{
 	{
 		"Read all metrics", http.MethodGet, "/", expectedResponse{
@@ -110,7 +112,7 @@ var readTests = []testCase{
 	},
 }
 
-// Validation: invalid type, name, or value
+// validationTests covers requests with an invalid type, name, or value.
 var validationTests = []testCase{
 	// Missing or invalid metric type
 	{
@@ -203,27 +205,32 @@ var validationTests = []testCase{
 	},
 }
 
+// runTableTests executes table-driven cases against a test server and asserts status, body, and Content-Type.
 func runTableTests(t *testing.T, cases []testCase) {
 	ts := GetTestServer()
 	defer ts.Close()
 
-	for _, v := range cases {
-		t.Run(v.name, func(t *testing.T) {
-			resp, body := doRequest(t, ts, v.method, v.path)
-			assert.Equal(t, v.want.code, resp.StatusCode)
-			assert.Equal(t, v.want.response, body)
-			assert.Equal(t, v.want.contentType, resp.Header.Get("Content-Type"))
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := doRequest(t, ts, tc.method, tc.path)
+			assert.Equal(t, tc.want.code, resp.StatusCode)
+			assert.Equal(t, tc.want.response, resp.body)
+			assert.Equal(t, tc.want.contentType, resp.Header.Get("Content-Type"))
 		})
 	}
 }
 
+// TestUpdate verifies that valid URL update requests return 200 and store the metric.
 func TestUpdate(t *testing.T) {
 	runTableTests(t, updateTests)
 }
 
+// TestRead verifies the metric list page and single metric value reads.
 func TestRead(t *testing.T) {
 	runTableTests(t, readTests)
 }
+
+// TestValidate verifies that requests with an invalid type, name, or value are rejected with 4xx.
 func TestValidate(t *testing.T) {
 	runTableTests(t, validationTests)
 }

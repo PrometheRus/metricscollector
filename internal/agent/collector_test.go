@@ -2,11 +2,11 @@ package agent
 
 import "testing"
 
-// TestAllMetricsExist verifies that collector populates all required gauge and counter metrics
+// TestAllMetricsExist verifies that collector populates all required gauge and counter metrics.
 func TestAllMetricsExist(t *testing.T) {
 	storage := NewAgentStorage()
-	c := &Collector{Storage: storage}
-	c.Run()
+	collector := NewCollector(storage)
+	collector.Run()
 	for _, metric := range GaugeMetrics {
 		_, err := storage.GetGauge(metric)
 		if err != nil {
@@ -24,10 +24,10 @@ func TestAllMetricsExist(t *testing.T) {
 // TestPollCountIncrement verifies that PollCount increases by 1 on each collector run.
 func TestPollCountIncrement(t *testing.T) {
 	storage := NewAgentStorage()
-	c := &Collector{Storage: storage}
+	collector := NewCollector(storage)
 
 	for i := 1; i < 100; i++ {
-		c.Run()
+		collector.Run()
 		pollCount, _ := storage.GetCounter("PollCount")
 		if pollCount != int64(i) {
 			t.Errorf("PollCount = %d, want %d", pollCount, i)

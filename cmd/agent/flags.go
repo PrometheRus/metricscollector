@@ -4,7 +4,7 @@ import (
 	"flag"
 )
 
-// flagServerAddr holds the HTTP address of the metrics server (-a)
+// flagServerAddr holds the HTTP address of the metrics server (-a).
 var flagServerAddr string
 
 // flagReportInterval holds the interval in seconds between metric reports (-r).

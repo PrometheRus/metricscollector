@@ -5,8 +5,8 @@ import (
 	"github.com/go-chi/chi/middleware"
 )
 
-// New builds and returns a chi router with all metric API routes.
-func (h *MetricsHandler) New() *chi.Mux {
+// NewRouter builds and returns a chi router with all metric API routes.
+func (h *MetricsHandler) NewRouter() *chi.Mux {
 	router := chi.NewRouter()
 	router.Use(loggerMiddleware)
 	router.Use(DecompressMiddleware)
@@ -23,6 +23,11 @@ func (h *MetricsHandler) New() *chi.Mux {
 		r.Post("/", h.handleJSONUpdate)
 	})
 
+	router.Route("/updates", func(r chi.Router) {
+		r.Use(requireJSONContent)
+		r.Post("/", h.handleJSONUpdates)
+	})
+
 	router.Route("/value", func(r chi.Router) {
 		r.Use(middleware.AllowContentType("application/json"))
 		r.Post("/", h.handleJSONRead)
@@ -34,6 +39,8 @@ func (h *MetricsHandler) New() *chi.Mux {
 		r.Post("/{METRIC}", h.handleMissingValue) // 400 — metric value missing
 		r.Post("/{METRIC}/{VALUE}", h.handleURLUpdate)
 	})
+
+	router.Get("/ping", h.handleDatabasePing)
 
 	return router
 }

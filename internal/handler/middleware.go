@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/PrometheRus/metricscollector/internal/model"
 	"github.com/go-chi/chi"
+	"github.com/nikitaw13/metricscollector/internal/model"
 	"go.uber.org/zap"
 )
 
@@ -19,13 +19,13 @@ import (
 // for endpoints that expect JSON payloads.
 func requireJSONContent(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-		if err != nil || mt != "application/json" {
+		mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if err != nil || mediaType != "application/json" {
 			http.Error(w, "Type is required", http.StatusBadRequest)
 			return
 		}
 		if r.ContentLength == 0 {
-			writeJSONError(w, http.StatusBadRequest, errors.New("Request body is required"))
+			writeJSONError(w, http.StatusBadRequest, errors.New("request body is required"))
 			return
 		}
 		h.ServeHTTP(w, r)
@@ -35,8 +35,8 @@ func requireJSONContent(h http.Handler) http.Handler {
 // requireMetricType rejects requests with an unknown metric type.
 func requireMetricType(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		t := chi.URLParam(r, "TYPE")
-		if t != model.Gauge && t != model.Counter {
+		metricType := chi.URLParam(r, "TYPE")
+		if metricType != model.Gauge && metricType != model.Counter {
 			http.Error(w, "Invalid metric type", http.StatusBadRequest)
 			return
 		}
@@ -49,27 +49,27 @@ func loggerMiddleware(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
 
-		ri := &responseInfo{
+		respInfo := &responseInfo{
 			status: 0,
 			size:   0,
 		}
 
-		lwr := loggingResponseWriter{
+		loggingWriter := loggingResponseWriter{
 			ResponseWriter: w,
-			responseInfo:   ri,
+			responseInfo:   respInfo,
 		}
 
-		h.ServeHTTP(&lwr, r)
+		h.ServeHTTP(&loggingWriter, r)
 
 		Logger.Info("got incoming HTTP request",
-			zap.String("URI", r.RequestURI),
+			zap.String("uri", r.RequestURI),
 			zap.String("method", r.Method),
 			zap.Duration("duration", time.Since(start)),
 		)
 
 		Logger.Info("response for incoming HTTP request",
-			zap.Int("status", ri.status),
-			zap.Int("size", ri.size),
+			zap.Int("status", respInfo.status),
+			zap.Int("size", respInfo.size),
 		)
 	})
 }
@@ -93,8 +93,8 @@ type compressWriter struct {
 // Sets Content-Encoding only for compressible types; marks non-compressible as bypassed.
 func (c *compressWriter) WriteHeader(code int) {
 	ct := c.ResponseWriter.Header().Get("Content-Type")
-	mt, _, _ := mime.ParseMediaType(ct)
-	if compressibleTypes[mt] {
+	mediaType, _, _ := mime.ParseMediaType(ct)
+	if compressibleTypes[mediaType] {
 		c.ResponseWriter.Header().Set("Content-Encoding", c.encoding)
 	} else {
 		c.bypassed = true
@@ -109,8 +109,8 @@ func (c *compressWriter) Write(b []byte) (int, error) {
 		return c.ResponseWriter.Write(b)
 	}
 	ct := c.ResponseWriter.Header().Get("Content-Type")
-	mt, _, _ := mime.ParseMediaType(ct)
-	if !compressibleTypes[mt] {
+	mediaType, _, _ := mime.ParseMediaType(ct)
+	if !compressibleTypes[mediaType] {
 		c.bypassed = true
 		c.ResponseWriter.Header().Del("Content-Encoding")
 		return c.ResponseWriter.Write(b)
@@ -127,25 +127,25 @@ func (c *compressWriter) Write(b []byte) (int, error) {
 func CompressMiddleware(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Vary", "Accept-Encoding")
-		ae := r.Header.Get("Accept-Encoding")
+		acceptEncoding := r.Header.Get("Accept-Encoding")
 
-		if strings.Contains(ae, "gzip") {
+		if strings.Contains(acceptEncoding, "gzip") {
 			// BestCompression is a package constant, so NewWriterLevel never errors here.
 			gz, _ := gzip.NewWriterLevel(w, gzip.BestCompression)
-			cw := &compressWriter{ResponseWriter: w, Writer: gz, encoding: "gzip"}
-			h.ServeHTTP(cw, r)
-			if !cw.bypassed {
+			compressWriter := &compressWriter{ResponseWriter: w, Writer: gz, encoding: "gzip"}
+			h.ServeHTTP(compressWriter, r)
+			if !compressWriter.bypassed {
 				gz.Close()
 			}
 			return
 		}
 
-		if strings.Contains(ae, "deflate") {
+		if strings.Contains(acceptEncoding, "deflate") {
 			// BestCompression is a package constant, so NewWriter never errors here.
 			dw, _ := flate.NewWriter(w, flate.BestCompression)
-			cw := &compressWriter{ResponseWriter: w, Writer: dw, encoding: "deflate"}
-			h.ServeHTTP(cw, r)
-			if !cw.bypassed {
+			compressWriter := &compressWriter{ResponseWriter: w, Writer: dw, encoding: "deflate"}
+			h.ServeHTTP(compressWriter, r)
+			if !compressWriter.bypassed {
 				dw.Close()
 			}
 			return

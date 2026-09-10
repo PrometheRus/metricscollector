@@ -7,13 +7,14 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// ptrFloat64 returns a pointer to v, used to build *float64 for test expectations.
-func ptrFloat64(v float64) *float64 { return &v }
+// ptrFloat64 returns a pointer to value, used to build *float64 for test expectations.
+func ptrFloat64(value float64) *float64 { return &value }
 
-// ptrInt64 returns a pointer to v, used to build *int64 for test expectations.
-func ptrInt64(v int64) *int64 { return &v }
+// ptrInt64 returns a pointer to value, used to build *int64 for test expectations.
+func ptrInt64(value int64) *int64 { return &value }
 
-func TestMetrics_ValidateForUpdate(t *testing.T) {
+// TestMetric_ValidateForUpdate verifies that invalid type, ID, or value are rejected and valid metrics pass.
+func TestMetric_ValidateForUpdate(t *testing.T) {
 	type fields struct {
 		ID    string
 		Type  string
@@ -129,22 +130,23 @@ func TestMetrics_ValidateForUpdate(t *testing.T) {
 		},
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			m := Metric{
-				ID:    tt.fields.ID,
-				Type:  tt.fields.Type,
-				Delta: tt.fields.Delta,
-				Value: tt.fields.Value,
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			metric := Metric{
+				ID:    tc.fields.ID,
+				Type:  tc.fields.Type,
+				Delta: tc.fields.Delta,
+				Value: tc.fields.Value,
 			}
 
-			err := m.ValidateForUpdate()
-			assert.ErrorIs(t, err, tt.expectedError, "error = %v, expectedError %v", err, tt.expectedError)
+			err := metric.ValidateForUpdate()
+			assert.ErrorIs(t, err, tc.expectedError, "error = %v, expectedError %v", err, tc.expectedError)
 		})
 	}
 }
 
-func TestMetrics_ValidateForRead(t *testing.T) {
+// TestMetric_ValidateForRead verifies that only a valid type and ID are required for reads.
+func TestMetric_ValidateForRead(t *testing.T) {
 	type fields struct {
 		ID    string
 		Type  string
@@ -209,17 +211,17 @@ func TestMetrics_ValidateForRead(t *testing.T) {
 			},
 		},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			m := Metric{
-				ID:    tt.fields.ID,
-				Type:  tt.fields.Type,
-				Delta: tt.fields.Delta,
-				Value: tt.fields.Value,
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			metric := Metric{
+				ID:    tc.fields.ID,
+				Type:  tc.fields.Type,
+				Delta: tc.fields.Delta,
+				Value: tc.fields.Value,
 			}
 
-			err := m.ValidateForRead()
-			assert.ErrorIs(t, err, tt.expectedError, "error = %v, expectedError %v", err, tt.expectedError)
+			err := metric.ValidateForRead()
+			assert.ErrorIs(t, err, tc.expectedError, "error = %v, expectedError %v", err, tc.expectedError)
 		})
 	}
 }

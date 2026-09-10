@@ -19,12 +19,12 @@ func InitLogger(level string) error {
 
 	cfg := zap.NewProductionConfig()
 	cfg.Level = lvl
-	zl, err := cfg.Build()
+	zapLogger, err := cfg.Build()
 	if err != nil {
 		return err
 	}
 
-	Logger = zl
+	Logger = zapLogger
 	return nil
 }
 

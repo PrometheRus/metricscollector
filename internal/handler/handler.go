@@ -1,29 +1,58 @@
 package handler
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
+	"time"
 
-	"github.com/PrometheRus/metricscollector/internal/model"
 	"github.com/go-chi/chi"
+	"github.com/nikitaw13/metricscollector/internal/model"
+	"go.uber.org/zap"
 )
 
 // MetricsHandler serves HTTP requests for reading and updating metrics.
 type MetricsHandler struct {
-	Storage Repository
+	storage  Repository
+	database DBPinger
+}
+
+// NewMetricsHandler creates a MetricsHandler with the provided storage and database pinger.
+func NewMetricsHandler(storage Repository, db DBPinger) *MetricsHandler {
+	return &MetricsHandler{
+		storage:  storage,
+		database: db,
+	}
 }
 
 // handleListMetrics returns an HTML page listing all known metrics.
 func (h *MetricsHandler) handleListMetrics(w http.ResponseWriter, r *http.Request) {
+	counters, err := h.storage.GetAllCounters()
+	if err != nil {
+		Logger.Error("failed to get all counters", zap.Error(err))
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	gauges, err := h.storage.GetAllGauges()
+	if err != nil {
+		Logger.Error("failed to get all gauges", zap.Error(err))
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "text/html; charset=UTF-8")
 	fmt.Fprintln(w, "<html><body>")
 	fmt.Fprintln(w, "<h1>List of names and results of all currently known metrics</h1>")
-	for k, v := range h.Storage.GetAllCounters() {
-		fmt.Fprintf(w, "<b>%v</b>:   <code>%v</code><br>", k, v)
+
+	for name, value := range counters {
+		fmt.Fprintf(w, "<b>%v</b>:   <code>%v</code><br>", name, value)
 	}
-	for k, v := range h.Storage.GetAllGauges() {
-		fmt.Fprintf(w, "<b>%v</b>:   <code>%v</code><br>", k, v)
+
+	for name, value := range gauges {
+		fmt.Fprintf(w, "<b>%v</b>:   <code>%v</code><br>", name, value)
 	}
 	fmt.Fprintln(w, "<hr></body></html>")
 }
@@ -31,22 +60,36 @@ func (h *MetricsHandler) handleListMetrics(w http.ResponseWriter, r *http.Reques
 // handleURLRead returns the current value of a single metric.
 func (h *MetricsHandler) handleURLRead(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	metricName := chi.URLParam(r, "METRIC")
 	switch chi.URLParam(r, "TYPE") {
 	case model.Gauge:
-		result, err := h.Storage.GetGauge(chi.URLParam(r, "METRIC"))
-		if err != nil {
+		value, err := h.storage.GetGauge(metricName)
+		if errors.Is(err, model.ErrMetricNotFound) {
+			Logger.Debug("gauge not found", zap.String("metric", metricName))
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		}
-		fmt.Fprintf(w, "%g\n", result)
+		if err != nil {
+			Logger.Error("failed to get gauge", zap.Error(err))
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+		fmt.Fprintf(w, "%g\n", value)
 
 	case model.Counter:
-		result, err := h.Storage.GetCounter(chi.URLParam(r, "METRIC"))
-		if err != nil {
+		delta, err := h.storage.GetCounter(metricName)
+		if errors.Is(err, model.ErrMetricNotFound) {
+			Logger.Debug("counter not found", zap.String("metric", metricName))
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
+
 		}
-		fmt.Fprintf(w, "%d\n", result)
+		if err != nil {
+			Logger.Error("failed to get counter", zap.Error(err))
+			http.Error(w, "Internal server error", http.StatusInternalServerError)
+			return
+		}
+		fmt.Fprintf(w, "%d\n", delta)
 	}
 }
 
@@ -64,24 +107,34 @@ func (h *MetricsHandler) handleMissingValue(w http.ResponseWriter, r *http.Reque
 func (h *MetricsHandler) handleURLUpdate(w http.ResponseWriter, r *http.Request) {
 	switch chi.URLParam(r, "TYPE") {
 	case model.Gauge:
-		gaugeValue, err := strconv.ParseFloat(chi.URLParam(r, "VALUE"), 64)
+		value := chi.URLParam(r, "VALUE")
+		metric := chi.URLParam(r, "METRIC")
+
+		parsedValue, err := strconv.ParseFloat(value, 64)
 		if err != nil {
+			Logger.Debug("invalid metric value", zap.Error(err))
 			http.Error(w, "Invalid metric value", http.StatusBadRequest)
 			return
 		}
-		if err := h.Storage.SetGauge(chi.URLParam(r, "METRIC"), gaugeValue); err != nil {
-			http.Error(w, "Failed to update Gauge", http.StatusInternalServerError)
+		if err := h.storage.SetGauge(metric, parsedValue); err != nil {
+			Logger.Error("failed to update gauge", zap.Error(err))
+			http.Error(w, "Failed to update gauge", http.StatusInternalServerError)
 			return
 		}
 
 	case model.Counter:
-		counterValue, err := strconv.ParseInt(chi.URLParam(r, "VALUE"), 10, 64)
+		value := chi.URLParam(r, "VALUE")
+		metric := chi.URLParam(r, "METRIC")
+
+		parsedValue, err := strconv.ParseInt(value, 10, 64)
 		if err != nil {
+			Logger.Debug("invalid metric value", zap.Error(err))
 			http.Error(w, "Invalid metric value", http.StatusBadRequest)
 			return
 		}
-		if err := h.Storage.AddCounter(chi.URLParam(r, "METRIC"), counterValue); err != nil {
-			http.Error(w, "Failed to update Counter", http.StatusInternalServerError)
+		if _, err := h.storage.AddCounter(metric, parsedValue); err != nil {
+			Logger.Error("failed to update counter", zap.Error(err))
+			http.Error(w, "Failed to update counter", http.StatusInternalServerError)
 			return
 		}
 	}
@@ -89,4 +142,20 @@ func (h *MetricsHandler) handleURLUpdate(w http.ResponseWriter, r *http.Request)
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(http.StatusOK)
 	fmt.Fprintf(w, "Metric '%s' updated\n", chi.URLParam(r, "METRIC"))
+}
+
+// handleDatabasePing responds to GET /ping by checking the database connectivity.
+func (h *MetricsHandler) handleDatabasePing(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 1*time.Second)
+	defer cancel()
+
+	if err := h.database.PingContext(ctx); err != nil {
+		Logger.Error("failed to ping database", zap.Error(err))
+		http.Error(w, "Failed to ping database", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+	fmt.Fprintf(w, "Pong\n")
 }

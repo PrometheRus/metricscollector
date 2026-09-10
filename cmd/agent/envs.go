@@ -15,22 +15,22 @@ func parseEnvs() {
 
 	envReportInterval, found := os.LookupEnv("REPORT_INTERVAL")
 	if found {
-		result, err := strconv.Atoi(envReportInterval)
+		intervalSec, err := strconv.Atoi(envReportInterval)
 
 		if err != nil {
-			log.Fatal("Can't convert REPORT_INTERVAL")
+			log.Fatal("failed to parse REPORT_INTERVAL")
 		}
-		flagReportInterval = result
+		flagReportInterval = intervalSec
 	}
 
 	envPollInterval, found := os.LookupEnv("POLL_INTERVAL")
 	if found {
-		result, err := strconv.Atoi(envPollInterval)
+		intervalSec, err := strconv.Atoi(envPollInterval)
 
 		if err != nil {
-			log.Fatal("Can't convert POLL_INTERVAL")
+			log.Fatal("failed to parse POLL_INTERVAL")
 		}
 
-		flagPollInterval = result
+		flagPollInterval = intervalSec
 	}
 }
